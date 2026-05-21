@@ -1,0 +1,22 @@
+name: openapi-sync
+# Nightly drift gate: re-fetch the live production OpenAPI spec and fail if the
+# committed snapshot diverges. Keeps the SDK provably in sync with the backend.
+on:
+  schedule: [{ cron: "0 6 * * *" }]
+  workflow_dispatch:
+jobs:
+  drift-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm run codegen
+      - name: Fail on drift
+        run: |
+          if ! git diff --quiet -- spec/openapi.json; then
+            echo "::error::spec/openapi.json drifted from production. Run 'npm run codegen', review, and update the SDK."
+            git --no-pager diff -- spec/openapi.json | head -200
+            exit 1
+          fi
+          echo "In sync with production OpenAPI."

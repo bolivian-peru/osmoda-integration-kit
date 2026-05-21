@@ -1,0 +1,41 @@
+{
+  "name": "@osmoda/sdk",
+  "version": "0.1.0",
+  "description": "Spawn AI-managed osModa servers (dedicated Hetzner cloud VMs) and chat with their agents — typed SDK for the spawn.os.moda v1 API (x402 payments, WebSocket chat, SSE events).",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "README.md", "SKILL.md", "LICENSE"],
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "npm run build",
+    "codegen": "node --experimental-strip-types scripts/codegen.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "osmoda", "ai-agent", "spawn", "hetzner", "x402", "usdc",
+    "claude-code", "openclaw", "agent-infrastructure", "a2a", "erc-8004", "mcp"
+  ],
+  "homepage": "https://spawn.os.moda",
+  "repository": { "type": "git", "url": "https://github.com/bolivian-peru/osmoda-integration-kit" },
+  "license": "Apache-2.0",
+  "engines": { "node": ">=18" },
+  "peerDependencies": {
+    "@x402/core": "*",
+    "ws": "*"
+  },
+  "peerDependenciesMeta": {
+    "@x402/core": { "optional": true },
+    "ws": { "optional": true }
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0"
+  }
+}

@@ -1,0 +1,3967 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "osModa Spawn API",
+    "version": "1.3.6",
+    "description": "Public API for spawning and controlling osModa AI-agent servers.\n\nSpawn a dedicated cloud VM running a root-capable AI agent, pay per spawn in USDC via x402, then poll status, chat over WebSocket, and observe a server-event SSE stream \u2014 all with the `osk_` Bearer token returned by spawn.\n\nQuick start: GET /api/v1/plans \u2192 POST /api/v1/spawn/{plan} (x402) \u2192 GET /api/v1/status/{orderId} until running \u2192 WS /api/v1/chat/{orderId}?token=osk_\u2026\n\nEvery response carries X-Request-Id. Errors share a uniform envelope (code, message, request_id). Per-token limits: 10 spawns/h, 120 status/min, 3 concurrent chat sessions; 429s include Retry-After. Spawn is idempotent via the Idempotency-Key header (24h).",
+    "contact": {
+      "name": "osModa",
+      "url": "https://spawn.os.moda"
+    },
+    "license": {
+      "name": "Proprietary"
+    }
+  },
+  "servers": [
+    {
+      "url": "https://spawn.os.moda",
+      "description": "Production"
+    }
+  ],
+  "security": [],
+  "tags": [
+    {
+      "name": "Plans",
+      "description": "List available server plans and pricing."
+    },
+    {
+      "name": "Spawn",
+      "description": "Provision a new server (x402-gated)."
+    },
+    {
+      "name": "Status",
+      "description": "Check provisioning status and server details."
+    },
+    {
+      "name": "Chat (WebSocket)",
+      "description": "Real-time chat with the spawned server's agent. Open as `wss://`. Frame protocol documented under the `x-websocket` extension at the bottom of this spec."
+    },
+    {
+      "name": "Tokens",
+      "description": "Inspect and revoke API tokens."
+    },
+    {
+      "name": "Docs",
+      "description": "OpenAPI schema."
+    },
+    {
+      "name": "Callbacks"
+    },
+    {
+      "name": "Standards",
+      "description": "ERC-8004 / A2A agent card (well-known)."
+    },
+    {
+      "name": "Spec-Kit",
+      "description": "Spec-driven development surface \u2014 discover spec-kit projects across spawned servers. Backed by per-server `spec_kit_init` + `spec_kit_run` MCP tools (github/spec-kit, 92K stars). See spawn.os.moda/docs#/Spec-Kit."
+    }
+  ],
+  "paths": {
+    "/api/v1/plans": {
+      "get": {
+        "summary": "List available plans",
+        "description": "Returns all plans with x402 pricing per supported chain.",
+        "operationId": "list_plans",
+        "tags": [
+          "Plans"
+        ],
+        "responses": {
+          "200": {
+            "description": "Plan list with x402 pricing.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlanList"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until next retry is allowed."
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/spawn/test": {
+      "post": {
+        "summary": "Spawn Solo server ($29/mo)",
+        "description": "1 agent, light tasks \u2014 2 vCPU, 4GB RAM, 40GB SSD. Payment via x402 (USDC).",
+        "operationId": "spawn_test",
+        "tags": [
+          "Spawn"
+        ],
+        "x-x402": {
+          "accepts": [
+            {
+              "scheme": "exact",
+              "price": "$29",
+              "network": "eip155:84532",
+              "payTo": "0xb78476F8e3b9D3f7A0Da8315272B00b26293535a"
+            },
+            {
+              "scheme": "exact",
+              "price": "$29",
+              "network": "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+              "payTo": "DFbWWDweU9jqaJSrEpyBCrWGZyDkaoDayak9EZA3QnYA"
+            }
+          ]
+        },
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "description": "Opaque client-generated key to make retries safe. Same key + same body returns the same response for 24h. Same key + different body returns 409.",
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{16,128}$",
+              "minLength": 16,
+              "maxLength": 128
+            },
+            "example": "spawn-2026-04-17-abc123"
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SpawnRequest"
+              },
+              "example": {
+                "region": "eu-central",
+                "ssh_key": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExample",
+                "ai_provider": "anthropic",
+                "api_key": "sk-ant-api03-..."
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Server spawning. Returns order ID and API token.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Request ID for log correlation."
+              },
+              "Idempotent-Replayed": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "true"
+                  ]
+                },
+                "description": "Present when this response is a cached replay of a prior Idempotency-Key."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpawnResponse"
+                },
+                "example": {
+                  "order_id": "e5c49d30-1234-4abc-9def-0123456789ab",
+                  "api_token": "osk_0123abcdef...",
+                  "plan": "Solo",
+                  "price_usd": 29,
+                  "server_ip": "203.0.113.42",
+                  "status": "provisioning",
+                  "status_url": "https://spawn.os.moda/api/v1/status/e5c49d30-1234-4abc-9def-0123456789ab",
+                  "chat_url": "wss://spawn.os.moda/api/v1/chat/e5c49d30-1234-4abc-9def-0123456789ab",
+                  "ssh": "ssh root@203.0.113.42",
+                  "message": "Server provisioning. osModa installs in 5-10 minutes."
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation failed (bad plan, invalid Idempotency-Key, etc).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "Payment required. Response body contains x402 payment requirements.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/X402PaymentRequired"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Idempotency-Key was reused with a different request body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until next retry is allowed."
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/spawn/starter": {
+      "post": {
+        "summary": "Spawn Pro server ($99/mo)",
+        "description": "2-4 agents, real work \u2014 4 vCPU, 8GB RAM, 80GB SSD. Payment via x402 (USDC).",
+        "operationId": "spawn_starter",
+        "tags": [
+          "Spawn"
+        ],
+        "x-x402": {
+          "accepts": [
+            {
+              "scheme": "exact",
+              "price": "$99",
+              "network": "eip155:84532",
+              "payTo": "0xb78476F8e3b9D3f7A0Da8315272B00b26293535a"
+            },
+            {
+              "scheme": "exact",
+              "price": "$99",
+              "network": "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+              "payTo": "DFbWWDweU9jqaJSrEpyBCrWGZyDkaoDayak9EZA3QnYA"
+            }
+          ]
+        },
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "description": "Opaque client-generated key to make retries safe. Same key + same body returns the same response for 24h. Same key + different body returns 409.",
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{16,128}$",
+              "minLength": 16,
+              "maxLength": 128
+            },
+            "example": "spawn-2026-04-17-abc123"
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SpawnRequest"
+              },
+              "example": {
+                "region": "eu-central",
+                "ssh_key": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExample",
+                "ai_provider": "anthropic",
+                "api_key": "sk-ant-api03-..."
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Server spawning. Returns order ID and API token.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Request ID for log correlation."
+              },
+              "Idempotent-Replayed": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "true"
+                  ]
+                },
+                "description": "Present when this response is a cached replay of a prior Idempotency-Key."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpawnResponse"
+                },
+                "example": {
+                  "order_id": "e5c49d30-1234-4abc-9def-0123456789ab",
+                  "api_token": "osk_0123abcdef...",
+                  "plan": "Pro",
+                  "price_usd": 99,
+                  "server_ip": "203.0.113.42",
+                  "status": "provisioning",
+                  "status_url": "https://spawn.os.moda/api/v1/status/e5c49d30-1234-4abc-9def-0123456789ab",
+                  "chat_url": "wss://spawn.os.moda/api/v1/chat/e5c49d30-1234-4abc-9def-0123456789ab",
+                  "ssh": "ssh root@203.0.113.42",
+                  "message": "Server provisioning. osModa installs in 5-10 minutes."
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation failed (bad plan, invalid Idempotency-Key, etc).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "Payment required. Response body contains x402 payment requirements.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/X402PaymentRequired"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Idempotency-Key was reused with a different request body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until next retry is allowed."
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/spawn/developer": {
+      "post": {
+        "summary": "Spawn Team server ($199/mo)",
+        "description": "5-10 agents, heavy loads \u2014 8 vCPU, 16GB RAM, 160GB SSD. Payment via x402 (USDC).",
+        "operationId": "spawn_developer",
+        "tags": [
+          "Spawn"
+        ],
+        "x-x402": {
+          "accepts": [
+            {
+              "scheme": "exact",
+              "price": "$199",
+              "network": "eip155:84532",
+              "payTo": "0xb78476F8e3b9D3f7A0Da8315272B00b26293535a"
+            },
+            {
+              "scheme": "exact",
+              "price": "$199",
+              "network": "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+              "payTo": "DFbWWDweU9jqaJSrEpyBCrWGZyDkaoDayak9EZA3QnYA"
+            }
+          ]
+        },
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "description": "Opaque client-generated key to make retries safe. Same key + same body returns the same response for 24h. Same key + different body returns 409.",
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{16,128}$",
+              "minLength": 16,
+              "maxLength": 128
+            },
+            "example": "spawn-2026-04-17-abc123"
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SpawnRequest"
+              },
+              "example": {
+                "region": "eu-central",
+                "ssh_key": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExample",
+                "ai_provider": "anthropic",
+                "api_key": "sk-ant-api03-..."
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Server spawning. Returns order ID and API token.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Request ID for log correlation."
+              },
+              "Idempotent-Replayed": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "true"
+                  ]
+                },
+                "description": "Present when this response is a cached replay of a prior Idempotency-Key."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpawnResponse"
+                },
+                "example": {
+                  "order_id": "e5c49d30-1234-4abc-9def-0123456789ab",
+                  "api_token": "osk_0123abcdef...",
+                  "plan": "Team",
+                  "price_usd": 199,
+                  "server_ip": "203.0.113.42",
+                  "status": "provisioning",
+                  "status_url": "https://spawn.os.moda/api/v1/status/e5c49d30-1234-4abc-9def-0123456789ab",
+                  "chat_url": "wss://spawn.os.moda/api/v1/chat/e5c49d30-1234-4abc-9def-0123456789ab",
+                  "ssh": "ssh root@203.0.113.42",
+                  "message": "Server provisioning. osModa installs in 5-10 minutes."
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation failed (bad plan, invalid Idempotency-Key, etc).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "Payment required. Response body contains x402 payment requirements.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/X402PaymentRequired"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Idempotency-Key was reused with a different request body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until next retry is allowed."
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/spawn/production": {
+      "post": {
+        "summary": "Spawn Scale server ($299/mo)",
+        "description": "10-20+ agents, full fleet \u2014 16 vCPU, 32GB RAM, 320GB SSD. Payment via x402 (USDC).",
+        "operationId": "spawn_production",
+        "tags": [
+          "Spawn"
+        ],
+        "x-x402": {
+          "accepts": [
+            {
+              "scheme": "exact",
+              "price": "$299",
+              "network": "eip155:84532",
+              "payTo": "0xb78476F8e3b9D3f7A0Da8315272B00b26293535a"
+            },
+            {
+              "scheme": "exact",
+              "price": "$299",
+              "network": "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+              "payTo": "DFbWWDweU9jqaJSrEpyBCrWGZyDkaoDayak9EZA3QnYA"
+            }
+          ]
+        },
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "description": "Opaque client-generated key to make retries safe. Same key + same body returns the same response for 24h. Same key + different body returns 409.",
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{16,128}$",
+              "minLength": 16,
+              "maxLength": 128
+            },
+            "example": "spawn-2026-04-17-abc123"
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SpawnRequest"
+              },
+              "example": {
+                "region": "eu-central",
+                "ssh_key": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExample",
+                "ai_provider": "anthropic",
+                "api_key": "sk-ant-api03-..."
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Server spawning. Returns order ID and API token.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Request ID for log correlation."
+              },
+              "Idempotent-Replayed": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "true"
+                  ]
+                },
+                "description": "Present when this response is a cached replay of a prior Idempotency-Key."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpawnResponse"
+                },
+                "example": {
+                  "order_id": "e5c49d30-1234-4abc-9def-0123456789ab",
+                  "api_token": "osk_0123abcdef...",
+                  "plan": "Scale",
+                  "price_usd": 299,
+                  "server_ip": "203.0.113.42",
+                  "status": "provisioning",
+                  "status_url": "https://spawn.os.moda/api/v1/status/e5c49d30-1234-4abc-9def-0123456789ab",
+                  "chat_url": "wss://spawn.os.moda/api/v1/chat/e5c49d30-1234-4abc-9def-0123456789ab",
+                  "ssh": "ssh root@203.0.113.42",
+                  "message": "Server provisioning. osModa installs in 5-10 minutes."
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation failed (bad plan, invalid Idempotency-Key, etc).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "Payment required. Response body contains x402 payment requirements.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/X402PaymentRequired"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Idempotency-Key was reused with a different request body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until next retry is allowed."
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/status/{orderId}": {
+      "get": {
+        "summary": "Check server status",
+        "description": "Returns basic status without auth; full details (server_ip, chat_url, provision_steps, install_error, etc.) when a valid Bearer osk_ token for this order is provided. Poll every 15 s while `status=provisioning`. Surface `provision_steps[]` for live install progress; surface `install_error` on `install_failed`.",
+        "operationId": "get_status",
+        "tags": [
+          "Status"
+        ],
+        "parameters": [
+          {
+            "name": "orderId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "example": "e5c49d30-1234-4abc-9def-0123456789ab"
+          }
+        ],
+        "security": [
+          {},
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Order status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/StatusResponseBasic"
+                    },
+                    {
+                      "$ref": "#/components/schemas/StatusResponseFull"
+                    }
+                  ]
+                },
+                "examples": {
+                  "basic_provisioning": {
+                    "summary": "Basic (no auth) \u2014 server still provisioning",
+                    "value": {
+                      "order_id": "550e8400-e29b-41d4-a716-446655440000",
+                      "status": "provisioning",
+                      "plan": "Pro",
+                      "created_at": "2026-05-04T08:00:00.000Z"
+                    }
+                  },
+                  "full_running": {
+                    "summary": "Full (Bearer) \u2014 server up and reachable",
+                    "value": {
+                      "order_id": "550e8400-e29b-41d4-a716-446655440000",
+                      "status": "running",
+                      "plan": "Pro",
+                      "created_at": "2026-05-04T08:00:00.000Z",
+                      "server_ip": "1.2.3.4",
+                      "server_name": "osmoda-9cbfc612",
+                      "region": "eu-central",
+                      "ssh": "ssh root@1.2.3.4",
+                      "chat_url": "wss://spawn.os.moda/api/v1/chat/550e8400-e29b-41d4-a716-446655440000",
+                      "price_usd": 34.99,
+                      "setup_complete": true,
+                      "last_heartbeat": "2026-05-04T08:14:00.000Z",
+                      "provision_steps": [
+                        {
+                          "step": "preflight",
+                          "status": "done",
+                          "detail": "ubuntu 24.04",
+                          "ts": "2026-05-04T08:00:30.000Z"
+                        },
+                        {
+                          "step": "dependencies",
+                          "status": "done",
+                          "detail": "rustc + node ready",
+                          "ts": "2026-05-04T08:01:50.000Z"
+                        },
+                        {
+                          "step": "build",
+                          "status": "done",
+                          "detail": "cargo build in 5m39s",
+                          "ts": "2026-05-04T08:07:31.000Z"
+                        },
+                        {
+                          "step": "services",
+                          "status": "done",
+                          "detail": "13 osmoda-* units active",
+                          "ts": "2026-05-04T08:08:14.000Z"
+                        },
+                        {
+                          "step": "ready",
+                          "status": "done",
+                          "detail": "first heartbeat received",
+                          "ts": "2026-05-04T08:08:43.000Z"
+                        }
+                      ]
+                    }
+                  },
+                  "full_install_failed": {
+                    "summary": "Full (Bearer) \u2014 install failed (with log_tail)",
+                    "value": {
+                      "order_id": "550e8400-e29b-41d4-a716-446655440000",
+                      "status": "install_failed",
+                      "plan": "Pro",
+                      "created_at": "2026-05-04T08:00:00.000Z",
+                      "server_ip": "1.2.3.4",
+                      "server_name": "osmoda-9cbfc612",
+                      "region": "eu-central",
+                      "ssh": "ssh root@1.2.3.4",
+                      "chat_url": "wss://spawn.os.moda/api/v1/chat/550e8400-e29b-41d4-a716-446655440000",
+                      "price_usd": 34.99,
+                      "setup_complete": false,
+                      "last_heartbeat": null,
+                      "install_failed_at": "2026-05-04T08:14:22.000Z",
+                      "install_error": {
+                        "step": "build",
+                        "reason": "Install exited with code 137 at phase build (OOM)",
+                        "log_tail": "+ cargo build --release\n[ \u2026 ]\nKilled\n",
+                        "at": "2026-05-04T08:14:22.000Z",
+                        "watchdog": false
+                      },
+                      "provision_steps": [
+                        {
+                          "step": "preflight",
+                          "status": "done",
+                          "detail": "ubuntu 24.04",
+                          "ts": "2026-05-04T08:00:30.000Z"
+                        },
+                        {
+                          "step": "dependencies",
+                          "status": "done",
+                          "detail": "rustc + node ready",
+                          "ts": "2026-05-04T08:01:50.000Z"
+                        },
+                        {
+                          "step": "build",
+                          "status": "started",
+                          "detail": "cargo build\u2026",
+                          "ts": "2026-05-04T08:02:10.000Z"
+                        },
+                        {
+                          "step": "failed",
+                          "status": "error",
+                          "detail": "Install exited with code 137",
+                          "ts": "2026-05-04T08:14:22.000Z"
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation failed or bad request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, expired, or revoked Bearer token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until next retry is allowed."
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/tokens/{token_id}": {
+      "get": {
+        "summary": "Read token metadata",
+        "description": "Returns expiry, creation, and revocation metadata. A token can only read its own metadata.",
+        "operationId": "get_token",
+        "tags": [
+          "Tokens"
+        ],
+        "parameters": [
+          {
+            "name": "token_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{16}$"
+            },
+            "example": "0123abcdef456789"
+          }
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Token metadata.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenMeta"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation failed or bad request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, expired, or revoked Bearer token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden \u2014 token does not own this resource.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until next retry is allowed."
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Revoke token",
+        "description": "Revokes the token permanently. A token can only revoke itself. Subsequent authenticated calls with that token will return 401 with code=token_revoked.",
+        "operationId": "revoke_token",
+        "tags": [
+          "Tokens"
+        ],
+        "parameters": [
+          {
+            "name": "token_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{16}$"
+            }
+          }
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Token revoked."
+          },
+          "400": {
+            "description": "Validation failed or bad request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, expired, or revoked Bearer token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden \u2014 token does not own this resource.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until next retry is allowed."
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/chat/{orderId}": {
+      "get": {
+        "summary": "WebSocket chat with the server's agent (HTTP\u2192WS upgrade)",
+        "description": "**This is a WebSocket endpoint.** Open it as `wss://spawn.os.moda/api/v1/chat/{orderId}?token=osk_\u2026`. It is listed here as a `GET` because OpenAPI 3.0 doesn't natively express WebSocket \u2014 see the **`x-websocket`** extension at the bottom of this spec for the full frame protocol, close codes, and message schemas. Try-it from Swagger UI is not supported (Swagger speaks HTTP, not WS); use any WS client such as `wscat -c 'wss://spawn.os.moda/api/v1/chat/<orderId>?token=osk_\u2026'` or the browser `WebSocket` API.  Auth via `token` query parameter. Tokens are validated pre-upgrade; expired/revoked tokens are rejected with `401`/`403` plus an `X-Auth-Reason` response header. Concurrency cap of 3 sessions per token, max 64 KB per frame, 30 s server pings, 10 min idle close (4003), backpressure pause/ resume control frames when buffered output exceeds 1 MB.",
+        "operationId": "chat_websocket",
+        "tags": [
+          "Chat (WebSocket)"
+        ],
+        "parameters": [
+          {
+            "name": "orderId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^osk_[0-9a-f]+$"
+            },
+            "description": "The osk_-prefixed Bearer token returned by spawn."
+          }
+        ],
+        "responses": {
+          "101": {
+            "description": "Switching Protocols \u2192 WebSocket established. See x-websocket for frame protocol."
+          },
+          "401": {
+            "description": "Missing or malformed token (X-Auth-Reason header set).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Expired/revoked token, or order not owned by this token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many concurrent sessions for this token (X-Auth-Reason: too_many_connections).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/spec-kit/projects": {
+      "get": {
+        "summary": "List spec-kit projects across spawned servers",
+        "description": "Returns all spec-driven-development projects on the caller's servers, aggregated from heartbeat data. Each project surfaces its slug, current phase status, last implement timestamp, and the spec.md path on the source server.\n\nUse case for SaaS integrators: enumerate every active spec-driven feature across a customer's fleet without SSHing in. Maps to the YC 'make your company queryable' principle.\n\nBearer (osk_) required \u2014 token scopes to its own order. To fan out across multiple orders, hold one token per order.",
+        "operationId": "list_spec_kit_projects",
+        "tags": [
+          "Spec-Kit"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Project list.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "count",
+                    "projects"
+                  ],
+                  "properties": {
+                    "count": {
+                      "type": "integer"
+                    },
+                    "projects": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/SpecKitProject"
+                      }
+                    },
+                    "learn_more": {
+                      "type": "string",
+                      "format": "uri"
+                    }
+                  }
+                },
+                "examples": {
+                  "empty": {
+                    "summary": "No spec-kit projects yet (newly-spawned server)",
+                    "value": {
+                      "count": 0,
+                      "projects": [],
+                      "learn_more": "https://spawn.os.moda/docs#/Spec-Kit"
+                    }
+                  },
+                  "with_projects": {
+                    "summary": "Two projects on one server",
+                    "value": {
+                      "count": 2,
+                      "projects": [
+                        {
+                          "order_id": "550e8400-e29b-41d4-a716-446655440000",
+                          "server_name": "osmoda-9cbfc612",
+                          "project": "billing-api",
+                          "slug": "billing-api",
+                          "status": "implementing",
+                          "last_implement_at": "2026-05-04T08:11:42.000Z",
+                          "spec_path": "/workspace/billing-api/specs/001-billing-api/spec.md"
+                        },
+                        {
+                          "order_id": "550e8400-e29b-41d4-a716-446655440000",
+                          "server_name": "osmoda-9cbfc612",
+                          "project": "auth-rewrite",
+                          "slug": "auth-rewrite",
+                          "status": "tests-green",
+                          "last_implement_at": "2026-05-03T22:04:09.000Z",
+                          "spec_path": "/workspace/auth-rewrite/specs/002-auth-rewrite/spec.md"
+                        }
+                      ],
+                      "learn_more": "https://spawn.os.moda/docs#/Spec-Kit"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, expired, or revoked Bearer token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until next retry is allowed."
+              }
+            }
+          }
+        }
+      }
+    },
+    "/.well-known/agent-card.json": {
+      "get": {
+        "summary": "ERC-8004 / A2A agent card",
+        "description": "Public, unauthenticated agent identity + capability discovery card. Used by other AI agents that want to invoke this one. Contains skills (one per spawn plan), x402 pricing, supported channels, runtime drivers, and capability flags. **Always read this first** to discover the API version, supported runtimes, and `runtimes[].supported_auth_types` (the source of truth for credential / runtime compatibility).",
+        "operationId": "agent_card",
+        "tags": [
+          "Standards"
+        ],
+        "responses": {
+          "200": {
+            "description": "Agent card JSON.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentCard"
+                },
+                "example": {
+                  "name": "osModa Spawn",
+                  "description": "Spawn dedicated AI-managed servers. Pay with USDC via x402. v1.2.2\u2026",
+                  "url": "https://spawn.os.moda",
+                  "version": "1.2.2",
+                  "protocols": [
+                    "A2A/1.0",
+                    "ERC-8004"
+                  ],
+                  "protocol": "A2A",
+                  "capabilities": {
+                    "x402": true,
+                    "streaming": true,
+                    "websocket": true,
+                    "modular_runtime": true,
+                    "oauth_credentials": true,
+                    "idempotency": true,
+                    "token_lifecycle": true,
+                    "structured_errors": true,
+                    "install_failure_visibility": true,
+                    "install_watchdog_minutes": 25,
+                    "provision_progress_callbacks": true,
+                    "spec_driven_development": true,
+                    "spec_kit_version": "v0.8.4",
+                    "network_mode": "testnet"
+                  },
+                  "runtimes": [
+                    {
+                      "name": "claude-code",
+                      "display_name": "Claude Code",
+                      "recommended": true,
+                      "supported_auth_types": [
+                        "oauth",
+                        "api_key"
+                      ],
+                      "default_models": [
+                        "claude-opus-4-7",
+                        "claude-sonnet-4-6",
+                        "claude-haiku-4-5"
+                      ],
+                      "description": "Anthropic's official Claude CLI. Accepts OAuth + API key."
+                    },
+                    {
+                      "name": "openclaw",
+                      "display_name": "OpenClaw",
+                      "supported_auth_types": [
+                        "api_key"
+                      ],
+                      "default_models": [
+                        "claude-sonnet-4-6"
+                      ],
+                      "description": "OpenClaw multi-runtime CLI (BYOK). API key only."
+                    }
+                  ],
+                  "endpoints": {
+                    "plans": "https://spawn.os.moda/api/v1/plans",
+                    "docs": "https://spawn.os.moda/api/v1/docs",
+                    "status": "https://spawn.os.moda/api/v1/status/{orderId}",
+                    "tokens": "https://spawn.os.moda/api/v1/tokens/{token_id}",
+                    "chat": "wss://spawn.os.moda/api/v1/chat/{orderId}",
+                    "spec_kit_projects": "https://spawn.os.moda/api/v1/spec-kit/projects"
+                  },
+                  "callback_endpoints": {
+                    "heartbeat": "https://spawn.os.moda/api/heartbeat",
+                    "provision_progress": "https://spawn.os.moda/api/provision-progress",
+                    "provision_failed": "https://spawn.os.moda/api/provision-failed"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{orderId}/events": {
+      "get": {
+        "summary": "Subscribe to the unified server event stream (SSE)",
+        "operationId": "v1_server_events_stream",
+        "tags": [
+          "Server events"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "orderId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "description": "Replay everything past this id. Use 0 to replay all stored events."
+          },
+          {
+            "name": "filter",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Comma-separated event-type prefixes (e.g. `request,state,agent,heartbeat,install`). Match by leading segment - `request` matches `request.accepted` etc."
+          }
+        ],
+        "description": "v1.3.0 - Server-Sent Events stream of every async lifecycle event for this server: request.accepted/progress/completed/failed/superseded, state.changed, agent.wedged/healed, heartbeat.received, install.progress. Cursor-resumable, 15 s keepalive comment frames, 30 min hard timeout. Each event has a stable `id` so reconnects can resume cleanly.",
+        "responses": {
+          "200": {
+            "description": "SSE stream open.",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string",
+                  "description": "Each frame: `id: N\\nevent: server\\ndata: {...}\\n\\n`"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`validation_failed` - bad orderId.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, expired, or revoked Bearer token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden` - token does not match this order.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{orderId}/requests": {
+      "get": {
+        "summary": "List recent request receipts",
+        "operationId": "v1_server_requests_list",
+        "tags": [
+          "Server events"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "orderId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "action",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "chat_message",
+                "agent_restart",
+                "key_delivery"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20
+            }
+          }
+        ],
+        "description": "v1.3.0 - History of recent async actions on this server. Each receipt carries status, accepted_at, completed_at, progress, result, failure, and `_links` to the events stream + this receipt.",
+        "responses": {
+          "200": {
+            "description": "Receipt list.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "order_id",
+                    "count",
+                    "requests"
+                  ],
+                  "properties": {
+                    "order_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "count": {
+                      "type": "integer"
+                    },
+                    "requests": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/RequestReceipt"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, expired, or revoked Bearer token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden` - token does not match this order.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until next retry is allowed."
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{orderId}/requests/{request_id}": {
+      "get": {
+        "summary": "Single request receipt (one-shot status)",
+        "operationId": "v1_server_request_status",
+        "tags": [
+          "Server events"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "orderId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^req_[a-z_]+_[0-9a-f]+$"
+            }
+          }
+        ],
+        "description": "v1.3.0 - Poll a single request without subscribing to SSE. Use this if your client can't hold an event stream open.",
+        "responses": {
+          "200": {
+            "description": "Receipt.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestReceipt"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`validation_failed` - bad orderId or request_id format.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, expired, or revoked Bearer token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden` - token does not match this order.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`request_not_found` - request_id never existed or expired.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until next retry is allowed."
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{orderId}/chat-history": {
+      "get": {
+        "summary": "Replay persisted chat (survives navigation + tab close)",
+        "operationId": "v1_server_chat_history",
+        "tags": [
+          "Server events"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "orderId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "since",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
+            },
+            "description": "Replay events past this id. 0 = full history."
+          }
+        ],
+        "description": "v1.3.0 - Cold-load chat history captured server-side regardless of WebSocket connection state. Returns the same shape the dashboard chat replays on mount: user messages, agent final replies, and tool-use/tool-result bubbles. Cap: last 200 events. Use this on tab open before connecting WS so your integrator UI shows continuity even after the user navigated away.",
+        "responses": {
+          "200": {
+            "description": "Chat events replay.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "order_id",
+                    "events",
+                    "cursor"
+                  ],
+                  "properties": {
+                    "order_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "cursor": {
+                      "type": "integer",
+                      "description": "Highest event id in this response. Pass as `?since=N` next time."
+                    },
+                    "truncated": {
+                      "type": "boolean",
+                      "description": "True if response was capped to 200."
+                    },
+                    "events": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "id",
+                          "ts",
+                          "role"
+                        ],
+                        "properties": {
+                          "id": {
+                            "type": "integer"
+                          },
+                          "ts": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "role": {
+                            "type": "string",
+                            "enum": [
+                              "user",
+                              "agent",
+                              "tool"
+                            ]
+                          },
+                          "text": {
+                            "type": "string",
+                            "description": "Set on `user` and `agent` events."
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "use",
+                              "result"
+                            ],
+                            "description": "Set on `tool` events."
+                          },
+                          "name": {
+                            "type": "string",
+                            "description": "Tool name (set on `tool` events)."
+                          },
+                          "source": {
+                            "type": "string"
+                          },
+                          "request_id": {
+                            "type": "string",
+                            "description": "Linked v1.3 request_id, if any."
+                          },
+                          "final": {
+                            "type": "boolean",
+                            "description": "Set on agent's final reply."
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, expired, or revoked Bearer token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden` - token does not match this order.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until next retry is allowed."
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{orderId}/spawn-log": {
+      "get": {
+        "summary": "NDJSON event log for self-serve diagnosis (v1.3.1)",
+        "operationId": "v1_server_spawn_log",
+        "tags": [
+          "Server events"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "orderId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "since_ms",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
+            },
+            "description": "Only events with `ts >= this unix-ms`. Pass back the previous `cursor_ms` for incremental polling."
+          },
+          {
+            "name": "level",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "example": "warn,error"
+            },
+            "description": "Comma-separated filter \u2014 `info`, `warn`, `error`. Default: all levels."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 500,
+              "default": 100
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Spawn-log snapshot.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "order_id",
+                    "status",
+                    "events",
+                    "events_count",
+                    "truncated",
+                    "cursor_ms"
+                  ],
+                  "properties": {
+                    "order_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "server_name": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "server_ip": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "status": {
+                      "type": "string",
+                      "description": "Current order.status (`running`, `provisioning`, `unreachable`, etc.)."
+                    },
+                    "setup_complete": {
+                      "type": "boolean"
+                    },
+                    "last_heartbeat": {
+                      "type": "string",
+                      "format": "date-time",
+                      "nullable": true
+                    },
+                    "agent_wedged": {
+                      "type": "boolean",
+                      "description": "Currently flagged as wedged by the v1.3.1 detector."
+                    },
+                    "agent_wedged_since": {
+                      "type": "string",
+                      "format": "date-time",
+                      "nullable": true
+                    },
+                    "auto_restart_attempts": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 4,
+                      "description": "How many auto-restart attempts the wedge detector has fired since the current wedge began. Resets to 0 on recovery."
+                    },
+                    "auto_restart_status": {
+                      "type": "string",
+                      "enum": [
+                        "restarting",
+                        "ready",
+                        "failed",
+                        "timeout",
+                        "exhausted"
+                      ],
+                      "nullable": true,
+                      "description": "Status of the most recent attempt. `exhausted` = no further auto-restarts; operator action needed."
+                    },
+                    "last_auto_restart_attempt_at": {
+                      "type": "string",
+                      "format": "date-time",
+                      "nullable": true
+                    },
+                    "events_count": {
+                      "type": "integer"
+                    },
+                    "truncated": {
+                      "type": "boolean",
+                      "description": "True if there were more matching events than `limit`."
+                    },
+                    "cursor_ms": {
+                      "type": "integer",
+                      "description": "Pass to `?since_ms=N` on the next call for incremental polling."
+                    },
+                    "events": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "ts",
+                          "level",
+                          "code",
+                          "message"
+                        ],
+                        "properties": {
+                          "ts": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "level": {
+                            "type": "string",
+                            "enum": [
+                              "info",
+                              "warn",
+                              "error"
+                            ]
+                          },
+                          "code": {
+                            "type": "string",
+                            "example": "agent_wedged",
+                            "description": "Stable event code: `provision_start`, `install_failed`, `first_heartbeat`, `setup_complete`, `agent_wedged`, `agent_recovered`, `agent_escalation_required`, etc."
+                          },
+                          "message": {
+                            "type": "string"
+                          },
+                          "detail": {
+                            "type": "object",
+                            "nullable": true,
+                            "additionalProperties": true
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, expired, or revoked Bearer token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden` - token does not match this order.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until next retry is allowed."
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{orderId}/agents/{agentId}/restart": {
+      "post": {
+        "summary": "Restart a wedged agent (managed)",
+        "operationId": "v1_server_agent_restart",
+        "tags": [
+          "Server events"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "orderId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "agentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "osmoda",
+                "mobile"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Restart accepted. Poll `GET /requests/:request_id` (preferred) or `GET .../restart/:restart_id` (legacy alias).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "restart_id",
+                    "request_id",
+                    "status"
+                  ],
+                  "properties": {
+                    "restart_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "request_id": {
+                      "type": "string",
+                      "pattern": "^req_agent_restart_[0-9a-f]+$"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "restarting"
+                      ]
+                    },
+                    "reused": {
+                      "type": "boolean"
+                    },
+                    "_links": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`validation_failed` - bad orderId or agentId.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, expired, or revoked Bearer token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden` - token does not match this order.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`server_not_ready` - server still provisioning.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{orderId}/api-key": {
+      "post": {
+        "summary": "Set / rotate the AI API key delivered to the agent",
+        "operationId": "v1_server_set_api_key",
+        "tags": [
+          "Server events"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "orderId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "api_key"
+                ],
+                "properties": {
+                  "api_key": {
+                    "type": "string",
+                    "maxLength": 256
+                  },
+                  "provider": {
+                    "type": "string",
+                    "enum": [
+                      "anthropic",
+                      "openai",
+                      "openrouter"
+                    ],
+                    "default": "anthropic"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Accepted for delivery. Subscribe to `/events?filter=request,state` to watch progress.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "updated",
+                    "provider",
+                    "request_id",
+                    "status",
+                    "accepted_at"
+                  ],
+                  "properties": {
+                    "updated": {
+                      "type": "boolean"
+                    },
+                    "provider": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string",
+                      "pattern": "^req_key_delivery_[0-9a-f]+$"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "pending"
+                      ]
+                    },
+                    "accepted_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "expected_completion_within_seconds": {
+                      "type": "integer"
+                    },
+                    "_links": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`validation_failed` - bad api_key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, expired, or revoked Bearer token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden` - token does not match this order.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`order_not_found`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/docs": {
+      "get": {
+        "summary": "OpenAPI schema",
+        "operationId": "get_docs",
+        "tags": [
+          "Docs"
+        ],
+        "responses": {
+          "200": {
+            "description": "OpenAPI 3.0 schema for this API."
+          },
+          "429": {
+            "description": "Rate limit exceeded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until next retry is allowed."
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "osk_<hex>",
+        "description": "Issued at spawn time. 1-year default TTL. Revocable via DELETE /api/v1/tokens/{token_id}."
+      }
+    },
+    "schemas": {
+      "RequestReceipt": {
+        "type": "object",
+        "required": [
+          "request_id",
+          "order_id",
+          "action",
+          "status",
+          "accepted_at"
+        ],
+        "description": "v1.3.0 unified request receipt. Returned by the request endpoints and matches the `request.*` event payloads on the SSE stream.",
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "pattern": "^req_[a-z_]+_[0-9a-f]+$",
+            "example": "req_chat_message_a1b2c3d4e5f60718"
+          },
+          "order_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "chat_message",
+              "agent_restart",
+              "key_delivery"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "in_progress",
+              "completed",
+              "failed",
+              "superseded",
+              "cancelled"
+            ]
+          },
+          "accepted_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "completed_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "expected_completion_within_seconds": {
+            "type": "integer",
+            "example": 60
+          },
+          "progress": {
+            "type": "object",
+            "nullable": true,
+            "additionalProperties": true,
+            "description": "Free-form progress payload. For chat_message the `stage` is `tool_use` or `tool_result`."
+          },
+          "result": {
+            "type": "object",
+            "nullable": true,
+            "additionalProperties": true,
+            "description": "Set on `completed`."
+          },
+          "failure": {
+            "type": "object",
+            "nullable": true,
+            "description": "Set on `failed`. `code` is stable; `fallback_recommendation` is a short hint for the UI.",
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "agent_silent",
+                  "agent_disconnected",
+                  "no_credential",
+                  "gateway_wedged",
+                  "gateway_unreachable",
+                  "ssh_pam_expired",
+                  "ssh_restart_failed",
+                  "timeout",
+                  "exception",
+                  "auth_rejected",
+                  "billing_rejected",
+                  "format_invalid"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "fallback_recommendation": {
+                "type": "string",
+                "enum": [
+                  "add_api_key",
+                  "restart_agent",
+                  "wait_for_wedge_auto_restart",
+                  "delete_and_respawn",
+                  "retry"
+                ],
+                "nullable": true
+              }
+            }
+          },
+          "triggered_by": {
+            "type": "string",
+            "example": "user",
+            "description": "`user`, `wedge_detector`, or other system actor."
+          },
+          "metadata": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "Action-specific metadata (e.g. `agent_id`, `provider`)."
+          },
+          "_links": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "string",
+                "description": "GET this URL to re-poll the receipt."
+              },
+              "events": {
+                "type": "string",
+                "description": "GET this URL with Accept: text/event-stream to subscribe live."
+              }
+            }
+          }
+        },
+        "example": {
+          "request_id": "req_key_delivery_a1b2c3d4e5f60718",
+          "order_id": "550e8400-e29b-41d4-a716-446655440000",
+          "action": "key_delivery",
+          "status": "completed",
+          "accepted_at": "2026-05-06T13:14:00.000Z",
+          "completed_at": "2026-05-06T13:14:42.471Z",
+          "expected_completion_within_seconds": 60,
+          "progress": null,
+          "result": {
+            "provider": "anthropic",
+            "delivered_to_customer_box": true
+          },
+          "failure": null,
+          "triggered_by": "user",
+          "metadata": {
+            "provider": "anthropic"
+          },
+          "_links": {
+            "status": "/api/v1/servers/550e8400-.../requests/req_key_delivery_a1b2c3d4e5f60718",
+            "events": "/api/v1/servers/550e8400-.../events?filter=request,state&since=0"
+          }
+        }
+      },
+      "Error": {
+        "type": "object",
+        "required": [
+          "code",
+          "message",
+          "request_id"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "Machine-readable error code. Match against this \u2014 message wording may change.",
+            "example": "plan_not_found"
+          },
+          "message": {
+            "type": "string",
+            "description": "Human-readable explanation.",
+            "example": "Unknown plan: foo."
+          },
+          "detail": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "Endpoint-specific diagnostic fields."
+          },
+          "request_id": {
+            "type": "string",
+            "description": "Server-assigned request identifier \u2014 echoed in X-Request-Id header.",
+            "example": "req_01JAXYZ..."
+          },
+          "error": {
+            "type": "string",
+            "description": "Legacy alias for `code`. Will be removed in v2.",
+            "deprecated": true
+          }
+        },
+        "example": {
+          "code": "plan_not_found",
+          "message": "Unknown plan: foo.",
+          "detail": {
+            "planId": "foo"
+          },
+          "request_id": "req_01JAXYZABC123",
+          "error": "plan_not_found"
+        }
+      },
+      "PlanList": {
+        "type": "object",
+        "required": [
+          "plans",
+          "regions",
+          "network"
+        ],
+        "properties": {
+          "plans": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Plan"
+            }
+          },
+          "regions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "flag": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "network": {
+            "type": "string",
+            "enum": [
+              "mainnet",
+              "testnet"
+            ]
+          }
+        },
+        "example": {
+          "plans": [
+            {
+              "id": "test",
+              "name": "Solo",
+              "description": "1 agent, light tasks",
+              "cpu": 2,
+              "ram": 4,
+              "disk": 40,
+              "price_usd": 14.99,
+              "tier": "Try it out",
+              "endpoint": "https://spawn.os.moda/api/v1/spawn/test",
+              "x402": {
+                "accepts": [
+                  {
+                    "scheme": "exact",
+                    "price": "$14.99",
+                    "network": "eip155:84532",
+                    "payTo": "0xb78476F8e3b9D3f7A0Da8315272B00b26293535a"
+                  },
+                  {
+                    "scheme": "exact",
+                    "price": "$14.99",
+                    "network": "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+                    "payTo": "DFbWWDweU9jqaJSrEpyBCrWGZyDkaoDayak9EZA3QnYA"
+                  }
+                ]
+              }
+            },
+            {
+              "id": "starter",
+              "name": "Pro",
+              "description": "2-4 agents, real work",
+              "cpu": 4,
+              "ram": 8,
+              "disk": 80,
+              "price_usd": 34.99,
+              "tier": "Recommended",
+              "endpoint": "https://spawn.os.moda/api/v1/spawn/starter"
+            }
+          ],
+          "regions": [
+            {
+              "id": "eu-central",
+              "name": "EU Central (Frankfurt)",
+              "flag": "eu"
+            },
+            {
+              "id": "eu-north",
+              "name": "EU North (Helsinki)",
+              "flag": "fi"
+            },
+            {
+              "id": "us-east",
+              "name": "US East (Virginia)",
+              "flag": "us"
+            },
+            {
+              "id": "us-west",
+              "name": "US West (Oregon)",
+              "flag": "us"
+            }
+          ],
+          "network": "testnet"
+        }
+      },
+      "Plan": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "cpu",
+          "ram",
+          "disk",
+          "price_usd",
+          "endpoint"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "cpu": {
+            "type": "integer"
+          },
+          "ram": {
+            "type": "integer",
+            "description": "GB"
+          },
+          "disk": {
+            "type": "integer",
+            "description": "GB"
+          },
+          "price_usd": {
+            "type": "number"
+          },
+          "tier": {
+            "type": "string"
+          },
+          "endpoint": {
+            "type": "string",
+            "format": "uri"
+          },
+          "x402": {
+            "type": "object",
+            "properties": {
+              "accepts": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "scheme": {
+                      "type": "string"
+                    },
+                    "price": {
+                      "type": "string"
+                    },
+                    "network": {
+                      "type": "string"
+                    },
+                    "payTo": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "SpawnRequest": {
+        "type": "object",
+        "properties": {
+          "region": {
+            "type": "string",
+            "enum": [
+              "eu-central",
+              "eu-north",
+              "us-east",
+              "us-west"
+            ],
+            "default": "eu-central"
+          },
+          "ssh_key": {
+            "type": "string",
+            "description": "SSH public key (ed25519, RSA, or ECDSA). Injected into the provisioned server.",
+            "maxLength": 1024
+          },
+          "ai_provider": {
+            "type": "string",
+            "enum": [
+              "anthropic",
+              "openai"
+            ],
+            "description": "Legacy single-credential field. Use `credentials[]` + `runtime` for the v1.2 modular runtime. If both are present, `credentials[]` wins."
+          },
+          "api_key": {
+            "type": "string",
+            "description": "API key for the selected ai_provider. Legacy form \u2014 auto-migrated into `credentials[]`. Not persisted server-side; passed once via cloud-init.",
+            "maxLength": 256
+          },
+          "runtime": {
+            "type": "string",
+            "enum": [
+              "claude-code",
+              "openclaw"
+            ],
+            "default": "claude-code",
+            "description": "Agent runtime. v1.2 modular runtime \u2014 pluggable drivers selected per-agent."
+          },
+          "default_model": {
+            "type": "string",
+            "example": "claude-opus-4-7"
+          },
+          "credentials": {
+            "type": "array",
+            "maxItems": 64,
+            "description": "Pre-configured credentials. The new server boots with credentials.json.enc populated \u2014 no SSH needed to add the first key.",
+            "items": {
+              "$ref": "#/components/schemas/SpawnCredentialInput"
+            }
+          }
+        },
+        "example": {
+          "region": "eu-central",
+          "ssh_key": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI... user@laptop",
+          "runtime": "claude-code",
+          "default_model": "claude-opus-4-7",
+          "credentials": [
+            {
+              "label": "My Claude Pro",
+              "provider": "anthropic",
+              "type": "oauth",
+              "secret": "sk-ant-oat01-\u2026"
+            },
+            {
+              "label": "Fallback API",
+              "provider": "anthropic",
+              "type": "api_key",
+              "secret": "sk-ant-api03-\u2026"
+            }
+          ]
+        }
+      },
+      "SpawnCredentialInput": {
+        "type": "object",
+        "required": [
+          "label",
+          "provider",
+          "type",
+          "secret"
+        ],
+        "description": "One pre-configured credential to seed into the new server's encrypted credential store.",
+        "properties": {
+          "label": {
+            "type": "string",
+            "description": "Operator-friendly name (e.g. 'My Claude Pro').",
+            "maxLength": 64
+          },
+          "provider": {
+            "type": "string",
+            "enum": [
+              "anthropic",
+              "openai"
+            ],
+            "description": "Credential provider."
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "oauth",
+              "api_key"
+            ],
+            "description": "OAuth = sk-ant-oat01-...; api_key = sk-ant-api03-..."
+          },
+          "secret": {
+            "type": "string",
+            "description": "The actual token. Sent over TLS, stored AES-256-GCM encrypted at rest, never returned via any API.",
+            "maxLength": 4096
+          },
+          "base_url": {
+            "type": "string",
+            "format": "uri",
+            "nullable": true,
+            "description": "Optional custom base URL (e.g. for an LLM proxy). HTTPS only; loopback / RFC1918 / metadata IPs rejected to prevent SSRF."
+          }
+        }
+      },
+      "SpawnResponse": {
+        "type": "object",
+        "required": [
+          "order_id",
+          "api_token",
+          "plan",
+          "price_usd",
+          "status",
+          "status_url",
+          "chat_url"
+        ],
+        "properties": {
+          "order_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "api_token": {
+            "type": "string",
+            "description": "osk_-prefixed bearer token. Store securely \u2014 not retrievable again.",
+            "example": "osk_0123abcdef..."
+          },
+          "plan": {
+            "type": "string"
+          },
+          "price_usd": {
+            "type": "number"
+          },
+          "server_ip": {
+            "type": "string",
+            "nullable": true
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "provisioning",
+              "running",
+              "failed",
+              "install_failed",
+              "deleted"
+            ]
+          },
+          "status_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "chat_url": {
+            "type": "string",
+            "format": "uri",
+            "description": "WebSocket URL. Authenticate via `?token=osk_...` query parameter. Frame protocol documented under the `x-websocket` extension at the bottom of this spec."
+          },
+          "ssh": {
+            "type": "string",
+            "nullable": true
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "example": {
+          "order_id": "550e8400-e29b-41d4-a716-446655440000",
+          "api_token": "osk_a1b2c3d4e5f60718293a4b5c6d7e8f90112233445566778899aabbccddeeff00",
+          "plan": "Pro",
+          "price_usd": 34.99,
+          "server_ip": "1.2.3.4",
+          "status": "provisioning",
+          "status_url": "https://spawn.os.moda/api/v1/status/550e8400-e29b-41d4-a716-446655440000",
+          "chat_url": "wss://spawn.os.moda/api/v1/chat/550e8400-e29b-41d4-a716-446655440000",
+          "ssh": "ssh root@1.2.3.4",
+          "message": "Server provisioning. osModa installs in 5-10 minutes."
+        }
+      },
+      "StatusResponseBasic": {
+        "type": "object",
+        "required": [
+          "order_id",
+          "status",
+          "plan",
+          "created_at"
+        ],
+        "properties": {
+          "order_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "type": "string",
+            "description": "One of: pending | provisioning | running | failed | install_failed | deleted"
+          },
+          "plan": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "example": {
+          "order_id": "550e8400-e29b-41d4-a716-446655440000",
+          "status": "provisioning",
+          "plan": "Pro",
+          "created_at": "2026-05-04T08:00:00.000Z"
+        }
+      },
+      "StatusResponseFull": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/StatusResponseBasic"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "server_ip": {
+                "type": "string",
+                "nullable": true
+              },
+              "server_name": {
+                "type": "string",
+                "nullable": true
+              },
+              "region": {
+                "type": "string"
+              },
+              "ssh": {
+                "type": "string",
+                "nullable": true
+              },
+              "chat_url": {
+                "type": "string",
+                "format": "uri"
+              },
+              "price_usd": {
+                "type": "number"
+              },
+              "setup_complete": {
+                "type": "boolean",
+                "description": "True after the spawned server's first heartbeat. Until then the server is mid-install."
+              },
+              "last_heartbeat": {
+                "type": "string",
+                "format": "date-time",
+                "nullable": true,
+                "description": "ISO timestamp of the most recent heartbeat from the spawned server."
+              },
+              "install_error": {
+                "$ref": "#/components/schemas/InstallError"
+              },
+              "install_failed_at": {
+                "type": "string",
+                "format": "date-time",
+                "nullable": true,
+                "description": "Set when status flipped to install_failed (either by an explicit /api/provision-failed callback or by the 25-min watchdog cron)."
+              },
+              "stalled": {
+                "type": "object",
+                "nullable": true,
+                "description": "Set by the smart watchdog when the install has been stuck in the same phase for \u22657 min but is still within the 25-min hard timeout. Surfaces a soft-warning state to integrators so the UI can show 'we noticed it's slow, investigating\u2026' instead of leaving the customer staring at a spinner. Cleared automatically when the next phase reports progress.",
+                "properties": {
+                  "step": {
+                    "type": "string",
+                    "description": "Phase the install is stuck on."
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "started",
+                      "done",
+                      "error"
+                    ]
+                  },
+                  "stuck_for_min": {
+                    "type": "integer",
+                    "description": "Whole minutes since the phase began."
+                  },
+                  "since": {
+                    "type": "string",
+                    "format": "date-time",
+                    "description": "Timestamp of the last phase event."
+                  }
+                }
+              },
+              "provision_steps": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "step": {
+                      "type": "string",
+                      "description": "Phase identifier (preflight, dependencies, build, services, etc.)"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "started",
+                        "done",
+                        "error"
+                      ]
+                    },
+                    "detail": {
+                      "type": "string",
+                      "description": "Human-readable detail. Truncated at 256 chars."
+                    },
+                    "ts": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ],
+        "example": {
+          "order_id": "550e8400-e29b-41d4-a716-446655440000",
+          "status": "running",
+          "plan": "Pro",
+          "created_at": "2026-05-04T08:00:00.000Z",
+          "server_ip": "1.2.3.4",
+          "server_name": "osmoda-9cbfc612",
+          "region": "eu-central",
+          "ssh": "ssh root@1.2.3.4",
+          "chat_url": "wss://spawn.os.moda/api/v1/chat/550e8400-e29b-41d4-a716-446655440000",
+          "price_usd": 34.99,
+          "setup_complete": true,
+          "last_heartbeat": "2026-05-04T08:14:00.000Z",
+          "provision_steps": [
+            {
+              "step": "preflight",
+              "status": "done",
+              "detail": "ubuntu 24.04",
+              "ts": "2026-05-04T08:00:30.000Z"
+            },
+            {
+              "step": "dependencies",
+              "status": "done",
+              "detail": "rustc 1.75.0 + node 20.18.0",
+              "ts": "2026-05-04T08:01:50.000Z"
+            },
+            {
+              "step": "build",
+              "status": "done",
+              "detail": "cargo build --release in 5m39s",
+              "ts": "2026-05-04T08:07:31.000Z"
+            },
+            {
+              "step": "services",
+              "status": "done",
+              "detail": "13 osmoda-* units active",
+              "ts": "2026-05-04T08:08:14.000Z"
+            },
+            {
+              "step": "ready",
+              "status": "done",
+              "detail": "first heartbeat received",
+              "ts": "2026-05-04T08:08:43.000Z"
+            }
+          ]
+        }
+      },
+      "InstallError": {
+        "type": "object",
+        "description": "Set on `StatusResponseFull` when `status=install_failed`. Surfaces the most actionable info we have without operator SSHing in.",
+        "nullable": true,
+        "properties": {
+          "step": {
+            "type": "string",
+            "description": "Phase that failed (e.g. 'preflight', 'build', 'services', or 'no_callback' when the watchdog flagged it)."
+          },
+          "reason": {
+            "type": "string"
+          },
+          "log_tail": {
+            "type": "string",
+            "description": "Last ~200 lines of /var/log/osmoda-cloud-init.log. Only present when /api/provision-failed was called explicitly (not from watchdog)."
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "watchdog": {
+            "type": "boolean",
+            "description": "True if flagged by the spawn-side install-timeout watchdog (no callback received) rather than an explicit failure callback."
+          }
+        },
+        "example": {
+          "step": "build",
+          "reason": "Install exited with code 137 at phase build (OOM killer)",
+          "log_tail": "+ cargo build --release\n[ ... 198 more lines ... ]\nKilled\n",
+          "at": "2026-05-04T08:14:22.000Z",
+          "watchdog": false
+        }
+      },
+      "TokenMeta": {
+        "type": "object",
+        "required": [
+          "token_id",
+          "order_id",
+          "created_at",
+          "expires_at"
+        ],
+        "properties": {
+          "token_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{16}$",
+            "description": "First 16 hex chars of the token's SHA-256 hash. Safe to log."
+          },
+          "order_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "revoked_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          }
+        },
+        "example": {
+          "token_id": "0123abcdef456789",
+          "order_id": "550e8400-e29b-41d4-a716-446655440000",
+          "created_at": "2026-05-04T08:00:00.000Z",
+          "expires_at": "2027-05-04T08:00:00.000Z",
+          "revoked_at": null
+        }
+      },
+      "X402PaymentRequired": {
+        "type": "object",
+        "description": "x402 payment requirements envelope. See https://x402.org for the protocol. Wrap your fetch with `@x402/fetch` or use the Coinbase CDP SDK to handle this automatically.",
+        "properties": {
+          "x402Version": {
+            "type": "integer"
+          },
+          "error": {
+            "type": "string"
+          },
+          "accepts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          }
+        },
+        "example": {
+          "x402Version": 1,
+          "error": "Payment required",
+          "accepts": [
+            {
+              "scheme": "exact",
+              "network": "eip155:84532",
+              "maxAmountRequired": "14990000",
+              "asset": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+              "payTo": "0xb78476F8e3b9D3f7A0Da8315272B00b26293535a",
+              "description": "Spawn osModa Solo server",
+              "resource": "https://spawn.os.moda/api/v1/spawn/test",
+              "mimeType": "application/json",
+              "maxTimeoutSeconds": 60
+            },
+            {
+              "scheme": "exact",
+              "network": "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+              "maxAmountRequired": "14990000",
+              "asset": "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+              "payTo": "DFbWWDweU9jqaJSrEpyBCrWGZyDkaoDayak9EZA3QnYA",
+              "description": "Spawn osModa Solo server",
+              "resource": "https://spawn.os.moda/api/v1/spawn/test",
+              "mimeType": "application/json",
+              "maxTimeoutSeconds": 60
+            }
+          ]
+        }
+      },
+      "HeartbeatRequest": {
+        "type": "object",
+        "required": [
+          "order_id",
+          "status"
+        ],
+        "properties": {
+          "order_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "alive",
+              "degraded"
+            ]
+          },
+          "setup_complete": {
+            "type": "boolean"
+          },
+          "agents": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          },
+          "apps": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          },
+          "daemon_health": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "active": {
+                  "type": "boolean"
+                },
+                "pid": {
+                  "type": "integer",
+                  "nullable": true
+                }
+              }
+            }
+          },
+          "recent_events": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          },
+          "mesh_identity": {
+            "type": "object",
+            "additionalProperties": true,
+            "nullable": true
+          },
+          "mesh_peers": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          },
+          "routines": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          },
+          "watchers": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          },
+          "mcp_servers": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          },
+          "teachd_health": {
+            "type": "object",
+            "additionalProperties": true,
+            "nullable": true
+          }
+        }
+      },
+      "ProvisionStepRequest": {
+        "type": "object",
+        "required": [
+          "order_id",
+          "step"
+        ],
+        "properties": {
+          "order_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "step": {
+            "type": "string",
+            "description": "Phase identifier \u2014 currently one of: preflight, dependencies, clone, build, openclaw, bridge, workspaces, apikey, services, nixos, reboot. Truncated at 64 chars.",
+            "maxLength": 64
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "started",
+              "done",
+              "error"
+            ],
+            "default": "started"
+          },
+          "detail": {
+            "type": "string",
+            "maxLength": 256
+          }
+        }
+      },
+      "SpecKitProject": {
+        "type": "object",
+        "description": "One spec-driven-development project on a spawned server. Heartbeat data \u2014 refreshed every 60 s.",
+        "properties": {
+          "order_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Which spawned server this project lives on."
+          },
+          "server_name": {
+            "type": "string",
+            "description": "Hetzner server name."
+          },
+          "project": {
+            "type": "string",
+            "description": "Human-readable project name."
+          },
+          "slug": {
+            "type": "string",
+            "description": "/workspace/<slug> path component."
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "scaffolded",
+              "specifying",
+              "planning",
+              "tasking",
+              "implementing",
+              "tests-green",
+              "abandoned"
+            ],
+            "description": "Current spec-kit phase."
+          },
+          "last_implement_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "spec_path": {
+            "type": "string",
+            "description": "Path to spec.md on the source server."
+          }
+        },
+        "example": {
+          "order_id": "550e8400-e29b-41d4-a716-446655440000",
+          "server_name": "osmoda-9cbfc612",
+          "project": "billing-api",
+          "slug": "billing-api",
+          "status": "implementing",
+          "last_implement_at": "2026-05-04T08:11:42.000Z",
+          "spec_path": "/workspace/billing-api/specs/001-billing-api/spec.md"
+        }
+      },
+      "ChatEvent": {
+        "type": "object",
+        "description": "v1.2.5 \u2014 one envelope discriminated by `type`. Emitted by `/chat-stream` (SSE) and aggregated by `/chat-history` (JSON). Order is monotonic by `id`. Terminal types are `done` and `error`; clients drop the SSE connection on either.",
+        "required": [
+          "id",
+          "ts",
+          "type"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "description": "Monotonic cursor. Use as the `cursor` query on reconnect."
+          },
+          "ts": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "phase",
+              "tool_call_start",
+              "tool_call_done",
+              "delta",
+              "done",
+              "error"
+            ]
+          },
+          "phase": {
+            "type": "string",
+            "enum": [
+              "thinking",
+              "answering"
+            ],
+            "description": "Present only for `type=phase`."
+          },
+          "tool": {
+            "type": "string",
+            "description": "Present on `tool_call_*` events."
+          },
+          "args_preview": {
+            "type": "string",
+            "maxLength": 400,
+            "description": "First chars of tool args (preview only)."
+          },
+          "result_preview": {
+            "type": "string",
+            "maxLength": 400,
+            "description": "First chars of tool result (preview only)."
+          },
+          "ok": {
+            "type": "boolean",
+            "description": "Tool call success \u2014 present on `tool_call_done`."
+          },
+          "duration_ms": {
+            "type": "integer",
+            "description": "Elapsed ms \u2014 present on `tool_call_done`."
+          },
+          "text": {
+            "type": "string",
+            "description": "Token chunk \u2014 present on `delta`."
+          },
+          "final_text": {
+            "type": "string",
+            "description": "Full assistant response \u2014 present on `done`."
+          },
+          "tokens_in": {
+            "type": "integer",
+            "description": "Optional, present on `done` if the agent reported it."
+          },
+          "tokens_out": {
+            "type": "integer",
+            "description": "Optional, present on `done` if the agent reported it."
+          },
+          "code": {
+            "type": "string",
+            "description": "Stable error code \u2014 present on `error` (e.g. `agent_silent`, `agent_send_failed`, `agent_error`)."
+          },
+          "message": {
+            "type": "string",
+            "description": "Human-readable error message \u2014 present on `error`."
+          }
+        },
+        "example": {
+          "id": 5,
+          "ts": "2026-05-06T08:00:01.234Z",
+          "type": "delta",
+          "text": "All systems running."
+        }
+      },
+      "ProvisionFailedRequest": {
+        "type": "object",
+        "required": [
+          "order_id"
+        ],
+        "properties": {
+          "order_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "step": {
+            "type": "string",
+            "maxLength": 64
+          },
+          "reason": {
+            "type": "string",
+            "description": "Free-form failure reason \u2014 typically `Install exited with code N at phase X`. JSON-escaped.",
+            "maxLength": 512
+          },
+          "log_tail": {
+            "type": "string",
+            "description": "Last 200 lines of /var/log/osmoda-cloud-init.log, newlines preserved as \\n.",
+            "maxLength": 8000
+          }
+        }
+      },
+      "AgentCardRuntime": {
+        "type": "object",
+        "description": "One runtime driver advertised by the agent card.",
+        "required": [
+          "name",
+          "supported_auth_types"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "enum": [
+              "claude-code",
+              "openclaw"
+            ],
+            "description": "Driver identifier."
+          },
+          "display_name": {
+            "type": "string",
+            "description": "Human-readable name for UI."
+          },
+          "recommended": {
+            "type": "boolean",
+            "description": "True for the default driver new spawns boot with."
+          },
+          "supported_auth_types": {
+            "type": "array",
+            "description": "Credential types accepted. `claude-code` accepts both; `openclaw` accepts api_key only.",
+            "items": {
+              "type": "string",
+              "enum": [
+                "oauth",
+                "api_key"
+              ]
+            }
+          },
+          "default_models": {
+            "type": "array",
+            "description": "Default model IDs offered for this driver. The dashboard adds a master-list fallback so newly-released models surface even on older customer gateways.",
+            "items": {
+              "type": "string"
+            },
+            "example": [
+              "claude-opus-4-7",
+              "claude-sonnet-4-6",
+              "claude-haiku-4-5"
+            ]
+          },
+          "description": {
+            "type": "string"
+          }
+        }
+      },
+      "AgentCardCapabilities": {
+        "type": "object",
+        "description": "Capability flags advertised by the spawn agent card. Booleans indicate support; numeric/string values carry version or threshold info.",
+        "properties": {
+          "x402": {
+            "type": "boolean",
+            "description": "x402 payment protocol supported on spawn endpoints."
+          },
+          "streaming": {
+            "type": "boolean",
+            "description": "Server supports streaming responses (SSE / WS chat frames)."
+          },
+          "websocket": {
+            "type": "boolean",
+            "description": "Per-order WebSocket chat available."
+          },
+          "modular_runtime": {
+            "type": "boolean",
+            "description": "v1.2+ pluggable runtime driver per agent."
+          },
+          "oauth_credentials": {
+            "type": "boolean",
+            "description": "Accepts OAuth (sk-ant-oat01-\u2026) credentials, gated by runtime supported_auth_types."
+          },
+          "idempotency": {
+            "type": "boolean",
+            "description": "Spawn endpoints honor Idempotency-Key (16\u2013128 chars, [A-Za-z0-9_-])."
+          },
+          "token_lifecycle": {
+            "type": "boolean",
+            "description": "GET / DELETE /api/v1/tokens/{id} for self-managed token rotation."
+          },
+          "structured_errors": {
+            "type": "boolean",
+            "description": "All errors use the Error envelope with code / request_id."
+          },
+          "install_failure_visibility": {
+            "type": "boolean",
+            "description": "v1.2.1+ \u2014 install_failed status + install_error field on full status."
+          },
+          "install_watchdog_minutes": {
+            "type": "integer",
+            "description": "Minutes after which orders without a heartbeat flip to install_failed.",
+            "example": 25
+          },
+          "provision_progress_callbacks": {
+            "type": "boolean"
+          },
+          "spec_driven_development": {
+            "type": "boolean",
+            "description": "v1.2.2+ \u2014 github/spec-kit baked into every spawn."
+          },
+          "spec_kit_version": {
+            "type": "string",
+            "description": "Pinned spec-kit version installed on every spawn.",
+            "example": "v0.8.4"
+          },
+          "network_mode": {
+            "type": "string",
+            "enum": [
+              "mainnet",
+              "testnet"
+            ],
+            "description": "USDC payment network mode currently advertised."
+          }
+        }
+      },
+      "AgentCard": {
+        "type": "object",
+        "description": "ERC-8004 / A2A agent card. Public, unauthenticated. Mirrors `/.well-known/agent-card.json`. Use this to discover the deployed contract: capability flags, available runtime drivers + auth types, the v1 endpoint catalog, and the spawn skill set.",
+        "required": [
+          "name",
+          "url",
+          "version",
+          "capabilities",
+          "skills"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "example": "osModa Spawn"
+          },
+          "description": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "version": {
+            "type": "string",
+            "description": "API version this card was minted from.",
+            "example": "1.2.2"
+          },
+          "protocols": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "example": [
+              "A2A/1.0",
+              "ERC-8004"
+            ]
+          },
+          "protocol": {
+            "type": "string",
+            "example": "A2A"
+          },
+          "capabilities": {
+            "$ref": "#/components/schemas/AgentCardCapabilities"
+          },
+          "runtimes": {
+            "type": "array",
+            "description": "Available runtime drivers. The `supported_auth_types` field on each entry is the source of truth for credential / runtime compatibility.",
+            "items": {
+              "$ref": "#/components/schemas/AgentCardRuntime"
+            }
+          },
+          "skills": {
+            "type": "array",
+            "description": "One skill per spawn plan. Each carries x402 price + input/output schemas.",
+            "items": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          },
+          "payment": {
+            "type": "object",
+            "description": "Aggregate x402 payment options across all spawn skills.",
+            "additionalProperties": true
+          },
+          "endpoints": {
+            "type": "object",
+            "description": "Public endpoint catalog. spec_kit_projects added in v1.2.2.",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "callback_endpoints": {
+            "type": "object",
+            "description": "Endpoints called BY the spawned server, NOT by API integrators.",
+            "additionalProperties": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  },
+  "x-websocket": {
+    "description": "Real-time bidirectional channels. Use these in addition to the REST endpoints above. Message frames are JSON; binary frames are not used.",
+    "endpoints": [
+      {
+        "path": "/api/v1/chat/{orderId}",
+        "description": "Live chat with the spawned server's agent. Authenticate via `?token=osk_...` query parameter (the same Bearer used on REST). Frame protocol: client sends `{type:'chat', text:'\u2026'}` or `{type:'abort'}`; server streams back `status`, `text`, `tool_use`, `tool_result`, `done`, `error`, plus `backpressure_pause`/`backpressure_resume` when buffered output crosses 1 MB / drops below 256 KB.",
+        "auth": {
+          "type": "query",
+          "param": "token",
+          "format": "osk_<hex>"
+        },
+        "close_codes": {
+          "1000": "Normal closure.",
+          "4001": "Unauthorized (missing or malformed token).",
+          "4003": "Idle timeout (10 min of no client messages).",
+          "4008": "Concurrency limit (max 3 sessions per token; usually returned pre-upgrade as HTTP 429 with X-Auth-Reason: too_many_connections)."
+        },
+        "max_message_bytes": 65536,
+        "heartbeat": {
+          "server_ping_interval_seconds": 30,
+          "client_pong_required": true,
+          "idle_close_seconds": 600
+        },
+        "backpressure": {
+          "high_water_bytes": 1048576,
+          "low_water_bytes": 262144,
+          "behavior": "drop frames while paused, do not buffer"
+        },
+        "messages": {
+          "client_to_server": {
+            "chat": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "const": "chat"
+                },
+                "text": {
+                  "type": "string"
+                }
+              }
+            },
+            "abort": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "const": "abort"
+                }
+              }
+            }
+          },
+          "server_to_client": {
+            "status": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "const": "status"
+                },
+                "agent_connected": {
+                  "type": "boolean"
+                }
+              }
+            },
+            "text": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "const": "text"
+                },
+                "text": {
+                  "type": "string"
+                }
+              }
+            },
+            "tool_use": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "const": "tool_use"
+                },
+                "name": {
+                  "type": "string"
+                }
+              }
+            },
+            "tool_result": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "const": "tool_result"
+                }
+              }
+            },
+            "done": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "const": "done"
+                }
+              }
+            },
+            "error": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "const": "error"
+                },
+                "text": {
+                  "type": "string"
+                },
+                "code": {
+                  "type": "string"
+                }
+              }
+            },
+            "backpressure_pause": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "const": "backpressure_pause"
+                }
+              }
+            },
+            "backpressure_resume": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "const": "backpressure_resume"
+                }
+              }
+            }
+          }
+        },
+        "examples": {
+          "send_chat": {
+            "client_to_server": {
+              "type": "chat",
+              "text": "What services are running?"
+            }
+          },
+          "stream": [
+            {
+              "server_to_client": {
+                "type": "status",
+                "agent_connected": true
+              }
+            },
+            {
+              "server_to_client": {
+                "type": "text",
+                "text": "Checking services\u2026"
+              }
+            },
+            {
+              "server_to_client": {
+                "type": "tool_use",
+                "name": "system_query"
+              }
+            },
+            {
+              "server_to_client": {
+                "type": "tool_result"
+              }
+            },
+            {
+              "server_to_client": {
+                "type": "text",
+                "text": "13 osmoda-* units active."
+              }
+            },
+            {
+              "server_to_client": {
+                "type": "done"
+              }
+            }
+          ]
+        },
+        "curl_smoke": "wscat -c 'wss://spawn.os.moda/api/v1/chat/<orderId>?token=osk_\u2026'"
+      }
+    ]
+  }
+}
