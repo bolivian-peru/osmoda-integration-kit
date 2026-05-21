@@ -14,12 +14,14 @@ agent live — over one clean TypeScript SDK.
 </div>
 
 > ### Status
-> **Preview (v0.1). Not yet on npm, not production-ready.** The SDK compiles and
-> the API surface is mapped from the live OpenAPI spec, but it has **no tests
-> yet** and hasn't been exercised end-to-end. The x402 payment helper is written
-> against the `@x402/core` interface but unverified. Treat APIs as unstable.
-> Until it's published to npm, install from source (see [Install](#install)).
-> Production hardening + npm release tracked in [issues](https://github.com/bolivian-peru/osmoda-integration-kit/issues).
+> **Preview (v0.1). Not yet on npm.** The SDK builds, the API surface is mapped
+> from the live OpenAPI spec, and it is **unit-tested** (mocked fetch / WS / SSE —
+> request building, auth, error envelope, x402 402 handling, balance spawn, chat
+> frame parsing, SSE). x402 auto-pay uses the real `@x402/fetch`
+> `wrapFetchWithPayment` API. **Still pending:** a live end-to-end run against a
+> funded server, then the npm publish. Treat APIs as unstable until v1.0. Until
+> it's on npm, install from source (see [Install](#install)). Progress in
+> [issues](https://github.com/bolivian-peru/osmoda-integration-kit/issues).
 
 ---
 

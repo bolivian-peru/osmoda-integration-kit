@@ -7,10 +7,10 @@
 
 import type {
   OsmodaClientOptions, Plan, SpawnOptions, SpawnResult, ServerStatus,
-  TokenInfo, RequestReceipt, AgentCard, Credential,
+  TokenInfo, RequestReceipt, AgentCard, Credential, Runtime,
 } from "./types.js";
 import { OsmodaError, OsmodaPaymentRequired, errorFromResponse } from "./errors.js";
-import { settleX402 } from "./x402.js";
+import { makePaymentFetch } from "./x402.js";
 import { ChatSession } from "./chat.js";
 import { EventStream } from "./events.js";
 
@@ -72,44 +72,77 @@ export class OsmodaClient {
    */
   async spawn(planId: string, opts: SpawnOptions = {}): Promise<SpawnResult> {
     const { idempotencyKey, wallet, ...payload } = opts;
-    const headers: Record<string, string> = {};
+    const headers: Record<string, string> = {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      "X-Osmoda-Sdk": "ts/0.1.0",
+      ...this.extraHeaders,
+    };
     if (idempotencyKey) headers["Idempotency-Key"] = idempotencyKey;
+    const url = `${this.baseUrl}/api/v1/spawn/${encodeURIComponent(planId)}`;
+    const init: RequestInit = { method: "POST", headers, body: JSON.stringify(payload) };
 
-    const path = `/api/v1/spawn/${encodeURIComponent(planId)}`;
-    const doPost = (extraHeaders?: Record<string, string>) =>
-      this.fetchImpl(`${this.baseUrl}${path}`, {
-        method: "POST",
-        headers: {
-          Accept: "application/json",
-          "Content-Type": "application/json",
-          "X-Osmoda-Sdk": "ts/0.1.0",
-          ...this.extraHeaders,
-          ...headers,
-          ...extraHeaders,
-        },
-        body: JSON.stringify(payload),
-      });
+    // Choose the fetch: if a wallet is supplied, wrap our fetch with @x402/fetch
+    // so the 402→pay→retry happens transparently. If the caller already passed a
+    // payment-wrapped fetch as `this.fetchImpl`, that handles it too.
+    const w = wallet ?? this.wallet;
+    const doFetch: typeof fetch = w ? await makePaymentFetch(this.fetchImpl, w) : this.fetchImpl;
 
-    let res = await doPost();
+    const res = await doFetch(url, init);
 
-    // x402: pay the invoice and retry once.
+    // Unpaid + no wallet → hand back the x402 invoice ({x402Version,error,accepts}).
     if (res.status === 402) {
       const requestId = res.headers.get("x-request-id") || undefined;
       const invoice = await res.json().catch(() => ({}));
-      const w = wallet ?? this.wallet;
-      if (!w) {
-        throw new OsmodaPaymentRequired({
-          message: "Spawn requires payment (x402). Pass a `wallet` to pay automatically.",
-          requestId,
-          paymentRequirements: invoice,
-        });
-      }
-      const { header } = await settleX402(w, invoice);
-      res = await doPost(header);
+      throw new OsmodaPaymentRequired({
+        message:
+          "Spawn requires payment (x402). Pass a `wallet` (with @x402/fetch installed) or a " +
+          "payment-wrapped `fetch` to pay automatically, or pay the returned invoice yourself.",
+        requestId,
+        paymentRequirements: invoice,
+      });
     }
 
     if (!res.ok) throw await errorFromResponse(res);
     return (await res.json()) as SpawnResult;
+  }
+
+  /**
+   * Spawn paying from a prepaid account balance, authenticated with an
+   * `sk_live_` API key (top up once, spawn many — no crypto wallet needed).
+   * Wraps `POST /api/dashboard/spawn`. Returns `{ order_id }` (note: this path
+   * does NOT mint an `osk_` token — see the README "Two ways to pay" note for
+   * the chat-surface caveat). Throws OsmodaError (code `insufficient_balance`)
+   * with `{ balance, required, shortfall }` in `detail` when funds are short.
+   */
+  async spawnWithBalance(
+    planId: string,
+    opts: { apiKey: string; region?: string; runtime?: Runtime; default_model?: string; credentials?: Credential[]; ssh_key?: string } ,
+  ): Promise<{ order_id: string; [k: string]: unknown }> {
+    const { apiKey, ...rest } = opts;
+    const res = await this.fetchImpl(`${this.baseUrl}/api/dashboard/spawn`, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+        "X-Osmoda-Sdk": "ts/0.1.0",
+        ...this.extraHeaders,
+      },
+      body: JSON.stringify({ plan_id: planId, ...rest }),
+    });
+    if (res.status === 402) {
+      const body = await res.json().catch(() => ({}));
+      throw new OsmodaError({
+        code: "insufficient_balance",
+        message: body.message || "Insufficient balance — add funds first.",
+        status: 402,
+        detail: body,
+        requestId: res.headers.get("x-request-id") || undefined,
+      });
+    }
+    if (!res.ok) throw await errorFromResponse(res);
+    return (await res.json()) as { order_id: string };
   }
 
   /** spawn() + waitUntilReady() in one call. */
@@ -191,8 +224,9 @@ export class OsmodaClient {
   setApiKey(orderId: string, credential: Credential, opts: { token?: string } = {}): Promise<RequestReceipt> {
     return this.request("POST", `/api/v1/servers/${encodeURIComponent(orderId)}/api-key`, { body: credential, token: opts.token });
   }
-  specKitProjects(orderId: string, opts: { token?: string } = {}): Promise<unknown> {
-    return this.request("GET", `/api/v1/spec-kit/projects`, { token: opts.token, headers: { "X-Order-Id": orderId } });
+  /** Spec-kit projects on the server the token belongs to (scope is derived from the Bearer token). */
+  specKitProjects(opts: { token?: string } = {}): Promise<unknown> {
+    return this.request("GET", `/api/v1/spec-kit/projects`, { token: opts.token });
   }
 
   // ── tokens ───────────────────────────────────────────────────────────────
