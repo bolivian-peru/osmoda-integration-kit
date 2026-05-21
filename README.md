@@ -8,10 +8,18 @@ Spin up a dedicated AI-managed server, pay per spawn in USDC, and chat with its
 agent live — over one clean TypeScript SDK.
 
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](./LICENSE)
-[![SDK](https://img.shields.io/badge/npm-%40osmoda%2Fsdk-cb3837.svg)](https://www.npmjs.com/package/@osmoda/sdk)
+[![status](https://img.shields.io/badge/status-preview%20v0.1-orange.svg)](#status)
 [![API](https://img.shields.io/badge/api-spawn.os.moda-111.svg)](https://spawn.os.moda/api/v1/docs)
 
 </div>
+
+> ### Status
+> **Preview (v0.1). Not yet on npm, not production-ready.** The SDK compiles and
+> the API surface is mapped from the live OpenAPI spec, but it has **no tests
+> yet** and hasn't been exercised end-to-end. The x402 payment helper is written
+> against the `@x402/core` interface but unverified. Treat APIs as unstable.
+> Until it's published to npm, install from source (see [Install](#install)).
+> Production hardening + npm release tracked in [issues](https://github.com/bolivian-peru/osmoda-integration-kit/issues).
 
 ---
 
@@ -29,8 +37,14 @@ into a few lines of code.
 - **Compose** it into anything: a "give every customer their own AI box" button,
   an autonomous agent that hires its own helper, or an internal tool.
 
+### Install
+
+Not on npm yet — install from source while it's in preview:
+
 ```bash
-npm install @osmoda/sdk
+git clone https://github.com/bolivian-peru/osmoda-integration-kit
+cd osmoda-integration-kit && npm install && npm run build
+# then import from the built dist/, or `npm link` it into your project
 ```
 
 ```ts

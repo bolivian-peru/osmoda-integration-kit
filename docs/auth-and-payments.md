@@ -1,6 +1,17 @@
 # Auth & payments
 
-## Two auth modes
+## Two ways to pay for spawns
+
+1. **x402 per-spawn (USDC, Base/Solana)** — the `POST /api/v1/spawn` surface this
+   SDK targets. No account needed. Supported by `OsmodaClient.spawn()`.
+2. **Prepaid balance + `sk_live_` API key** — top up a balance (Stripe card or
+   crypto deposit), create a `sk_live_` key, and spawn from balance via the
+   dashboard surface (`POST /api/dashboard/spawn`). Top up once, spawn many; the
+   server deducts from balance atomically and returns *"Insufficient balance —
+   add funds first"* when short. **Not yet wrapped by this SDK** (roadmap) — call
+   the dashboard endpoint directly with `Authorization: Bearer sk_live_…` for now.
+
+## Two auth modes (for the x402 / `osk_` surface this SDK covers)
 
 1. **x402 payment** — only for `POST /api/v1/spawn/:planId`. USDC on Base or Solana.
 2. **`osk_` Bearer token** — everything after spawn. Returned by `spawn()` as

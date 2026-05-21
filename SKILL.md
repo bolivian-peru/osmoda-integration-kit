@@ -30,7 +30,12 @@ Typical use cases:
 
 ## 2. Install & construct
 
+> **Preview (v0.1):** not yet published to npm. Install from source —
+> `git clone … && npm install && npm run build` — then `npm link` or import from
+> `dist/`. No tests yet; treat APIs as unstable.
+
 ```bash
+# once published it will be: npm install @osmoda/sdk
 npm install @osmoda/sdk
 # optional, only to auto-pay spawn invoices:
 npm install @x402/core @x402/evm     # Base (EVM)   — or @x402/solana for Solana
@@ -165,9 +170,21 @@ stream.start();                                 // resumes from cursor on drops
 
 ---
 
-## 8. x402 payments
+## 8. Payment options
 
-Spawning is x402 payment-gated (USDC on Base or Solana).
+osModa supports two ways to pay for spawns:
+
+1. **x402 per-spawn (USDC on Base/Solana)** — the public `POST /api/v1/spawn/:planId`
+   surface this SDK targets. Pay-as-you-go, no account needed. **Supported by this SDK.**
+2. **Prepaid account balance + `sk_live_` API key** — top up a balance (card via
+   Stripe, or crypto deposit), generate a `sk_live_` key, and spawn from balance
+   via the dashboard surface (`POST /api/dashboard/spawn`, atomic balance deduct).
+   Easier for many integrators (no wallet). **Not yet wrapped by this SDK** — on
+   the roadmap; for now use the dashboard surface directly with your `sk_live_` key.
+
+### x402 (option 1) details
+
+Spawning via `/api/v1/spawn` is x402 payment-gated (USDC on Base or Solana).
 - With a `wallet` (client- or call-level), `spawn()` handles `402 → pay → retry`.
 - Without one, `spawn()` throws **`OsmodaPaymentRequired`** carrying
   `.paymentRequirements` (the raw invoice) so you can pay it yourself and retry.

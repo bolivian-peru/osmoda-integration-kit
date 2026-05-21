@@ -1,7 +1,10 @@
 # Quickstart
 
+> **Preview (v0.1):** not on npm yet — install from source:
+> `git clone https://github.com/bolivian-peru/osmoda-integration-kit && npm install && npm run build`.
+
 ```bash
-npm install @osmoda/sdk
+# (once published) npm install @osmoda/sdk
 # optional, only to auto-pay spawn invoices:
 npm install @x402/core @x402/evm
 ```
